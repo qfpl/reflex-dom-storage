@@ -150,6 +150,19 @@ instance MonadRef m => MonadRef (StorageT t k m) where
   {-# INLINABLE writeRef #-}
   writeRef r = lift . writeRef r
 
+runPureStorageT :: ( Reflex t
+                   , Monad m
+                   , MonadFix m
+                   , MonadHold t m
+                   , GCompare k
+                   )
+                => StorageT t k m a
+                -> m a
+runPureStorageT s = mdo
+  (a, eChanges) <- runEventWriterT . flip runReaderT d . unStorageT $ s
+  d <- foldDyn ($) DMap.empty $ storageMonoidToEndo <$> eChanges
+  pure a
+
 runStorageT :: forall t k m a.
                ( Reflex t
                , Monad m
@@ -157,6 +170,7 @@ runStorageT :: forall t k m a.
                , MonadFix m
                , MonadHold t m
                , TriggerEvent t m
+               , PerformEvent t m
                , GKey k
                , GCompare k
                , ToJSONTag k Identity
@@ -166,26 +180,50 @@ runStorageT :: forall t k m a.
             -> StorageT t k m a
             -> m a
 runStorageT st s = mdo
-  let
-    ew = flip runReaderT d . unStorageT $ s
-  (a, eAppChanges) <- runEventWriterT ew
+  (a, eAppChanges) <- runEventWriterT . flip runReaderT d . unStorageT $ s
 
-  -- TODO make the eAppChanges happen in storage
+  eAppChanges' <- performEvent $ writeToStorage st <$> eAppChanges
 
   window <- currentWindowUnchecked
-  eWindowChanges <- wrapDomEvent window (`on` storage) $ (storageHandler (Proxy :: Proxy k) st)
+  eWindowChanges <- wrapDomEvent window (`on` storage) $ (handleStorageEvents (Proxy :: Proxy k) st)
 
   let
-    eChanges = eWindowChanges <> eAppChanges
+    eChanges = eWindowChanges <> eAppChanges'
 
   d <- foldDyn ($) DMap.empty $ storageMonoidToEndo <$> eChanges
   pure a
 
-storageHandler :: GCompare k => Proxy k -> StorageType -> EventM Window StorageEvent (StorageMonoid k)
-storageHandler _ st = do
+writeToStorage :: ( Monad m
+                  )
+               => StorageType
+               -> StorageMonoid k
+               -> m (StorageMonoid k)
+writeToStorage st sm = do
+
+  -- TODO do inserts
+  -- DMap.traverseWithKey _ . smInserts $ sm
+
+  -- TODO do changes
+  -- DMap.traverseWithKey _ . smChanges $ sm
+
+  -- TODO do removes
+  -- traverse _ . Set.toList . smRemoves $ sm
+
+  pure sm
+
+handleStorageEvents :: ( GKey k
+                       , GCompare k
+                       , FromJSONTag k Identity
+                       )
+                    => Proxy k
+                    -> StorageType
+                    -> EventM Window StorageEvent (StorageMonoid k)
+handleStorageEvents _ st = do
   eS <- ask
 
-  -- TODO gather the changes from the event
+  -- TODO check the storage type
+  -- TODO check we are interested in the key
+  -- TODO determine if it is an insert / change / remove
 
   pure mempty
 
