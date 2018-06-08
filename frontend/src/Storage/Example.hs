@@ -21,7 +21,7 @@ import Data.GADT.Compare
 
 import Data.Aeson (ToJSON, FromJSON, encode, decode)
 
-import Storage
+import Reflex.Dom.Storage.Base
 
 data Foo = Foo { bar :: Bool, baz :: String }
   deriving (Eq, Ord, Show, Generic)

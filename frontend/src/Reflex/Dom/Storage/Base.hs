@@ -15,7 +15,7 @@ Portability : non-portable
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE CPP #-}
-module Storage where
+module Reflex.Dom.Storage.Base where
 
 import Control.Monad (void, forM_)
 import Data.Coerce (coerce)
@@ -64,6 +64,8 @@ import Foreign.JavaScript.Utils (jsonDecode)
 import Data.Text.Encoding (decodeUtf8, encodeUtf8)
 import Data.ByteString.Lazy (toStrict, fromStrict)
 
+import Reflex.Dom.Storage.Class
+
 class GKey t where
   toKey :: Some t -> Text
   fromKey :: Text -> Maybe (Some t)
@@ -80,38 +82,6 @@ data StorageType =
   | LocalStorage
   deriving (Eq, Ord, Show)
 
-data StorageMonoid k =
-  StorageMonoid {
-    smInserts :: DMap k Identity
-  , smRemoves :: Set (Some k)
-  }
-
-instance GCompare k => Semigroup (StorageMonoid k) where
-  (StorageMonoid i1 r1) <> (StorageMonoid i2 r2) =
-    StorageMonoid (DMap.union i1 i2) (Set.union r1 r2)
-
-instance GCompare k => Monoid (StorageMonoid k) where
-  mempty = StorageMonoid DMap.empty Set.empty
-  mappend = (<>)
-
-smInsert :: GCompare k => k a -> a -> StorageMonoid k
-smInsert k a = StorageMonoid (DMap.singleton k (Identity a)) mempty
-
-smRemove :: k a -> StorageMonoid k
-smRemove k = StorageMonoid DMap.empty (Set.singleton (This k))
-
-storageMonoidToEndo :: GCompare k
-                    => StorageMonoid k
-                    -> DMap k Identity
-                    -> DMap k Identity
-storageMonoidToEndo (StorageMonoid inserts removes) d =
-  let
-    toRemove k = Set.member (This k) removes
-  in
-    DMap.filterWithKey (\k _ -> Set.notMember (This k) removes) .
-    DMap.union inserts $
-    d
-
 newtype StorageT t k m a =
   StorageT {
     unStorageT :: ReaderT (Dynamic t (DMap k Identity)) (EventWriterT t (StorageMonoid k) m) a
@@ -119,16 +89,12 @@ newtype StorageT t k m a =
               MonadSample t, MonadAsyncException, MonadException, PostBuild t,
               MonadReflexCreateTrigger t, TriggerEvent t, MonadAtomicRef)
 
-instance MonadTrans (StorageT t k) where
-  lift = StorageT . lift . lift
-
-class HasStorage t k m | m -> k, m -> t where
-  askStorage  :: m (Dynamic t (DMap k Identity))
-  tellStorage :: Event t (StorageMonoid k) -> m ()
-
 instance (Reflex t, GCompare k, Monad m) => HasStorage t k (StorageT t k m) where
   askStorage    = StorageT ask
   tellStorage e = StorageT . lift $ tellEvent e
+
+instance MonadTrans (StorageT t k) where
+  lift = StorageT . lift . lift
 
 -- instance Requester t m => Requester t (StorageT t k m) where
 --   type Request (StorageT t k m) = Request m
@@ -327,43 +293,3 @@ handleStorageEvents _ st = do
             Just v -> pure $ smInsert k (runIdentity v)
             Nothing -> pure mempty
 
-tellStorageInsert :: (Reflex t, GCompare k, Monad m, HasStorage t k m)
-                  => k a
-                  -> Event t a
-                  -> m ()
-tellStorageInsert k e =
-  tellStorage $ smInsert k <$> e
-
-tellStorageRemove :: (Reflex t, Monad m, HasStorage t k m)
-                  => k a
-                  -> Event t ()
-                  -> m ()
-tellStorageRemove k e =
-  tellStorage $ smRemove k <$ e
-
-askStorageTag :: (Reflex t, GCompare k, Monad m, HasStorage t k m)
-              => k a
-              -> m (Dynamic t (Maybe a))
-askStorageTag k = do
-  dStorage <- askStorage
-  pure $ fmap runIdentity . (DMap.lookup k) <$> dStorage
-
-askStorageTagDef :: (Reflex t, GCompare k, Monad m, HasStorage t k m)
-                 => k a
-                 -> a
-                 -> m (Dynamic t a)
-askStorageTagDef k d =
-  fmap (fromMaybe d) <$> askStorageTag k
-
-initializeTag :: (GCompare k, Monad m, HasStorage t k m, PostBuild t m)
-              => k a
-              -> a
-              -> m ()
-initializeTag k v = do
-  ePostBuild <- getPostBuild
-  dTag <- askStorageTag k
-  let
-    eInsert = ffilter isNothing $ current dTag <@ ePostBuild
-
-  tellStorageInsert k $ v <$ eInsert
-  pure ()

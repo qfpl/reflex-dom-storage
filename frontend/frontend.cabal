@@ -18,7 +18,8 @@ library
   exposed-modules:
     Frontend
   other-modules:
-      Storage
+      Reflex.Dom.Storage.Base
+    , Reflex.Dom.Storage.Class
     , Storage.Example
   ghc-options: -Wall
 

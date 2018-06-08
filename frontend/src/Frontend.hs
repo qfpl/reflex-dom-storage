@@ -19,7 +19,8 @@ import Data.Maybe (fromMaybe)
 import qualified Data.Text as Text
 import qualified Data.Dependent.Map as DMap
 
-import Storage
+import Reflex.Dom.Storage.Base
+import Reflex.Dom.Storage.Class
 import Storage.Example
 
 frontend :: (StaticWidget x (), Widget x ())
