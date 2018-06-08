@@ -36,9 +36,7 @@ body = do
 
 counter :: (MonadWidget t m, HasStorage t ExampleTag m) => m ()
 counter = el "div" $ do
-  dmTag1 <- askStorageTag Tag1
-  let
-    dTag1 = fromMaybe 0 <$> dmTag1
+  dTag1 <- askStorageTagDef Tag1 0
 
   eAdd <- button "Add"
   eClear <- button "Clear"

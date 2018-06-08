@@ -20,7 +20,7 @@ module Storage where
 import Control.Monad (void, forM_)
 import Data.Coerce (coerce)
 import Data.Functor.Identity (Identity(..))
-import Data.Maybe (isNothing, catMaybes)
+import Data.Maybe (isNothing, catMaybes, fromMaybe)
 import Data.Monoid hiding ((<>))
 import Data.Proxy (Proxy(..))
 import Data.Semigroup
@@ -347,6 +347,13 @@ askStorageTag :: (Reflex t, GCompare k, Monad m, HasStorage t k m)
 askStorageTag k = do
   dStorage <- askStorage
   pure $ fmap runIdentity . (DMap.lookup k) <$> dStorage
+
+askStorageTagDef :: (Reflex t, GCompare k, Monad m, HasStorage t k m)
+                 => k a
+                 -> a
+                 -> m (Dynamic t a)
+askStorageTagDef k d =
+  fmap (fromMaybe d) <$> askStorageTag k
 
 initializeTag :: (GCompare k, Monad m, HasStorage t k m, PostBuild t m)
               => k a
