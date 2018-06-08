@@ -1,5 +1,9 @@
 A first pass at a `reflex` API for working with local storage.
 
+This is an Obelisk project at the moment.  I'll extract it out into a library soon.
+
+You should be able to do `ob run` and then open a few tabs at http://localhost;8000 and watch them interact with each other.
+
 ```haskell
 body :: MonadWidget t m => m ()
 body = do
