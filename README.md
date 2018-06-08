@@ -5,6 +5,7 @@ body :: MonadWidget t m => m ()
 body = do
   text "Testing storage"
   void . runStorageT LocalStorage $ do
+    -- sets the default value for Tag1, only if none is already present
     initializeTag Tag1 0
     counter
 
