@@ -6,6 +6,7 @@ Stability   : experimental
 Portability : non-portable
 -}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE RecursiveDo #-}
@@ -13,21 +14,27 @@ Portability : non-portable
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE CPP #-}
 module Storage where
 
+import Control.Monad (void, forM_)
+import Data.Coerce (coerce)
 import Data.Functor.Identity (Identity(..))
+import Data.Maybe (isNothing, catMaybes)
 import Data.Monoid hiding ((<>))
 import Data.Proxy (Proxy(..))
 import Data.Semigroup
 
-import Control.Monad.Trans (MonadTrans, MonadIO, lift)
+import Control.Monad.Trans (MonadTrans, MonadIO, lift, liftIO)
 import Control.Monad.Fix (MonadFix)
 import Control.Monad.Ref (MonadRef(..), MonadAtomicRef)
 import Control.Monad.Exception (MonadAsyncException, MonadException)
 import Control.Monad.Reader (ReaderT, runReaderT, ask)
 
 import Reflex
+import Reflex.Network
 import Reflex.Host.Class
+import Reflex.Dom.Core hiding (Value, Error, Window)
 
 import Data.Text (Text)
 import Data.Set (Set)
@@ -36,27 +43,37 @@ import qualified Data.Set as Set
 import Data.Dependent.Map (DMap, Some(..), GCompare)
 import qualified Data.Dependent.Map as DMap
 
-import Data.Aeson (ToJSON, FromJSON, Value)
-import Data.Aeson.Types (Parser)
+import Data.Aeson (ToJSON, FromJSON, Value, encode)
+import Data.Aeson.Types (Parser, Result(..), parse)
+import Data.Aeson.Encoding as E (value, encodingToLazyByteString)
+import qualified Data.ByteString.Lazy as LBS
 
 import GHCJS.DOM (currentWindowUnchecked)
-import GHCJS.DOM.Types (MonadJSM, liftJSM)
+import GHCJS.DOM.Types (MonadJSM, liftJSM, toJSVal)
 import GHCJS.DOM.EventM (EventM, on)
-import GHCJS.DOM.Window (Window)
+import GHCJS.DOM.Window (Window, getLocalStorage, getSessionStorage)
 import GHCJS.DOM.WindowEventHandlers (storage)
+import GHCJS.DOM.Storage (Storage(..), getItem, setItem, removeItem)
 import GHCJS.DOM.StorageEvent
 
+import Language.Javascript.JSaddle (valToJSON)
+
 import Reflex.Dom.Builder.Immediate (wrapDomEvent)
+import Foreign.JavaScript.Utils (jsonDecode)
+
+import Data.Text.Encoding (decodeUtf8, encodeUtf8)
+import Data.ByteString.Lazy (toStrict, fromStrict)
 
 class GKey t where
   toKey :: Some t -> Text
   fromKey :: Text -> Maybe (Some t)
+  keys :: Proxy t -> [Some t]
 
 class ToJSONTag t f where
-  toJSONTagged :: t a -> f a -> Value
+  encodeTagged :: t a -> f a -> LBS.ByteString
 
 class FromJSONTag t f where
-  parseJSONTagged :: t a -> Value -> Parser (f a)
+  decodeTagged :: t a -> LBS.ByteString -> Maybe (f a)
 
 data StorageType =
     SessionStorage
@@ -66,41 +83,32 @@ data StorageType =
 data StorageMonoid k =
   StorageMonoid {
     smInserts :: DMap k Identity
-  , smChanges :: DMap k Endo
   , smRemoves :: Set (Some k)
   }
 
 instance GCompare k => Semigroup (StorageMonoid k) where
-  (StorageMonoid i1 c1 r1) <> (StorageMonoid i2 c2 r2) =
-    StorageMonoid (DMap.union i1 i2) (DMap.unionWithKey (const (<>)) c1 c2) (Set.union r1 r2)
+  (StorageMonoid i1 r1) <> (StorageMonoid i2 r2) =
+    StorageMonoid (DMap.union i1 i2) (Set.union r1 r2)
 
 instance GCompare k => Monoid (StorageMonoid k) where
-  mempty = StorageMonoid DMap.empty DMap.empty Set.empty
+  mempty = StorageMonoid DMap.empty Set.empty
   mappend = (<>)
 
 smInsert :: GCompare k => k a -> a -> StorageMonoid k
-smInsert k a = StorageMonoid (DMap.singleton k (Identity a)) DMap.empty mempty
-
-smChange :: GCompare k => k a -> (a -> a) -> StorageMonoid k
-smChange k f = StorageMonoid DMap.empty (DMap.singleton k (Endo f)) mempty
+smInsert k a = StorageMonoid (DMap.singleton k (Identity a)) mempty
 
 smRemove :: k a -> StorageMonoid k
-smRemove k = StorageMonoid DMap.empty DMap.empty (Set.singleton (This k))
+smRemove k = StorageMonoid DMap.empty (Set.singleton (This k))
 
 storageMonoidToEndo :: GCompare k
                     => StorageMonoid k
                     -> DMap k Identity
                     -> DMap k Identity
-storageMonoidToEndo (StorageMonoid inserts changes removes) d =
+storageMonoidToEndo (StorageMonoid inserts removes) d =
   let
-    idToConstEndo = Endo . const . runIdentity
-    constEndoMap = DMap.map idToConstEndo d
-    padChanges = DMap.union changes constEndoMap
-    appId f = fmap (appEndo f)
     toRemove k = Set.member (This k) removes
   in
     DMap.filterWithKey (\k _ -> Set.notMember (This k) removes) .
-    DMap.intersectionWithKey (const appId) padChanges .
     DMap.union inserts $
     d
 
@@ -114,7 +122,7 @@ newtype StorageT t k m a =
 instance MonadTrans (StorageT t k) where
   lift = StorageT . lift . lift
 
-class HasStorage t k m where
+class HasStorage t k m | m -> k, m -> t where
   askStorage  :: m (Dynamic t (DMap k Identity))
   tellStorage :: Event t (StorageMonoid k) -> m ()
 
@@ -134,12 +142,42 @@ instance (Reflex t, GCompare k, Monad m) => HasStorage t k (StorageT t k m) wher
 --   askStorage = lift askStorage
 --   tellStorage e = RequesterT $ _
 
--- instance PerformEvent t m => PerformEvent t (StorageT t k m) where
---   type Performable (StorageT t k m) = Performable m
---   {-# INLINABLE performEvent_ #-}
---   performEvent_ = lift . performEvent_
---   {-# INLINABLE performEvent #-}
---   performEvent = lift . performEvent
+instance PerformEvent t m => PerformEvent t (StorageT t k m) where
+  type Performable (StorageT t k m) = Performable m
+  {-# INLINABLE performEvent_ #-}
+  performEvent_ = lift . performEvent_
+  {-# INLINABLE performEvent #-}
+  performEvent = lift . performEvent
+
+instance (DomBuilder t m, MonadHold t m, MonadFix m, GCompare k) => DomBuilder t (StorageT t k m) where
+  type DomBuilderSpace (StorageT t k m) = DomBuilderSpace m
+  textNode = lift . textNode
+  element elementTag cfg (StorageT child) = StorageT $ element elementTag cfg child
+  inputElement = lift . inputElement
+  textAreaElement = lift . textAreaElement
+  selectElement cfg (StorageT child) = StorageT $ selectElement cfg child
+  placeRawElement = lift . placeRawElement
+  wrapRawElement e = lift . wrapRawElement e
+
+instance (Monad m, NotReady t m) => NotReady t (StorageT t k m)
+
+instance (Adjustable t m, MonadHold t m, GCompare k) => Adjustable t (StorageT t k m) where
+  runWithReplace a0 a' = StorageT $ runWithReplace (unStorageT a0) (fmapCheap unStorageT a')
+  traverseDMapWithKeyWithAdjust f dm edm = StorageT $ traverseDMapWithKeyWithAdjust (\k v -> unStorageT $ f k v) (coerce dm) (coerceEvent edm)
+  {-# INLINABLE traverseDMapWithKeyWithAdjust #-}
+  traverseIntMapWithKeyWithAdjust f dm edm = StorageT $ traverseIntMapWithKeyWithAdjust (\k v -> unStorageT $ f k v) (coerce dm) (coerceEvent edm)
+  {-# INLINABLE traverseIntMapWithKeyWithAdjust #-}
+  traverseDMapWithKeyWithAdjustWithMove f dm edm = StorageT $ traverseDMapWithKeyWithAdjustWithMove (\k v -> unStorageT $ f k v) (coerce dm) (coerceEvent edm)
+  {-# INLINABLE traverseDMapWithKeyWithAdjustWithMove #-}
+
+instance HasDocument m => HasDocument (StorageT t k m)
+
+instance HasJSContext m => HasJSContext (StorageT t k m) where
+  type JSContextPhantom (StorageT t k m) = JSContextPhantom m
+  askJSContext = StorageT askJSContext
+#ifndef ghcjs_HOST_OS
+instance MonadJSM m => MonadJSM (StorageT t k m)
+#endif
 
 instance MonadRef m => MonadRef (StorageT t k m) where
   type Ref (StorageT t k m) = Ref m
@@ -171,6 +209,8 @@ runStorageT :: forall t k m a.
                , MonadHold t m
                , TriggerEvent t m
                , PerformEvent t m
+               , PostBuild t m
+               , MonadJSM (Performable m)
                , GKey k
                , GCompare k
                , ToJSONTag k Identity
@@ -185,31 +225,81 @@ runStorageT st s = mdo
   eAppChanges' <- performEvent $ writeToStorage st <$> eAppChanges
 
   window <- currentWindowUnchecked
-  eWindowChanges <- wrapDomEvent window (`on` storage) $ (handleStorageEvents (Proxy :: Proxy k) st)
+  eWindowChanges <- wrapDomEvent window (`on` storage) $ handleStorageEvents (Proxy :: Proxy k) st
+
+  iStorage <- readFromStorage (Proxy :: Proxy k) st
 
   let
     eChanges = eWindowChanges <> eAppChanges'
 
-  d <- foldDyn ($) DMap.empty $ storageMonoidToEndo <$> eChanges
+  d <- foldDyn ($) iStorage $ storageMonoidToEndo <$> eChanges
+
   pure a
 
+getStorage :: MonadJSM m
+             => StorageType
+             -> m Storage
+getStorage LocalStorage =
+  currentWindowUnchecked >>= getLocalStorage
+getStorage SessionStorage =
+  currentWindowUnchecked >>= getSessionStorage
+
+sStore :: (MonadJSM m, GKey k, ToJSONTag k Identity)
+       => StorageType
+       -> k a
+       -> Identity a
+       -> m ()
+sStore st k v = do
+  s <- getStorage st
+  setItem s (toKey (This k)) (decodeUtf8 . toStrict . encodeTagged k $ v)
+
+sLoad :: (MonadJSM m, GKey k, FromJSONTag k Identity)
+      => StorageType
+      -> k a
+      -> m (Maybe (Identity a))
+sLoad st k = do
+  s <- getStorage st
+  mt <- getItem s (toKey (This k))
+  pure $ decodeTagged k . fromStrict . encodeUtf8 =<< mt
+
+sRemove :: (MonadJSM m, GKey k)
+        => StorageType
+        -> Some k
+        -> m ()
+sRemove st k = do
+  s <- getStorage st
+  removeItem s (toKey k)
+
 writeToStorage :: ( Monad m
+                  , MonadJSM m
+                  , GKey k
+                  , ToJSONTag k Identity
                   )
                => StorageType
                -> StorageMonoid k
                -> m (StorageMonoid k)
 writeToStorage st sm = do
-
-  -- TODO do inserts
-  -- DMap.traverseWithKey _ . smInserts $ sm
-
-  -- TODO do changes
-  -- DMap.traverseWithKey _ . smChanges $ sm
-
-  -- TODO do removes
-  -- traverse _ . Set.toList . smRemoves $ sm
-
+  DMap.traverseWithKey (\k v -> v <$ sStore st k v) . smInserts $ sm
+  traverse (sRemove st) . Set.toList . smRemoves $ sm
   pure sm
+
+readFromStorage :: ( Monad m
+                   , MonadJSM m
+                   , GKey k
+                   , GCompare k
+                   , FromJSONTag k Identity
+                   )
+                => Proxy k
+                -> StorageType
+                -> m (DMap k Identity)
+readFromStorage p st = do
+  let
+    readKey s@(This k) = do
+      mt <- sLoad st k
+      pure $ (k DMap.:=>) <$> mt
+
+  xs <- traverse readKey (keys p)
+  pure . DMap.fromList . catMaybes $ xs
 
 handleStorageEvents :: ( GKey k
                        , GCompare k
@@ -220,12 +310,22 @@ handleStorageEvents :: ( GKey k
                     -> EventM Window StorageEvent (StorageMonoid k)
 handleStorageEvents _ st = do
   eS <- ask
-
   -- TODO check the storage type
-  -- TODO check we are interested in the key
-  -- TODO determine if it is an insert / change / remove
 
-  pure mempty
+  key :: Maybe Text <- getKey eS
+  let
+    s = fromKey =<< key
+  case s of
+    Nothing -> pure mempty
+    Just (This k) -> do
+      newValue :: Maybe Text <- getNewValue eS
+      case newValue of
+        Nothing ->
+          pure $ smRemove k
+        Just nv ->
+          case decodeTagged k . fromStrict . encodeUtf8 $ nv of
+            Just v -> pure $ smInsert k (runIdentity v)
+            Nothing -> pure mempty
 
 tellStorageInsert :: (Reflex t, GCompare k, Monad m, HasStorage t k m)
                   => k a
@@ -234,13 +334,6 @@ tellStorageInsert :: (Reflex t, GCompare k, Monad m, HasStorage t k m)
 tellStorageInsert k e =
   tellStorage $ smInsert k <$> e
 
-tellStorageChange :: (Reflex t, GCompare k, Monad m, HasStorage t k m)
-                  => k a
-                  -> Event t (a -> a)
-                  -> m ()
-tellStorageChange k e =
-  tellStorage $ smChange k <$> e
-
 tellStorageRemove :: (Reflex t, Monad m, HasStorage t k m)
                   => k a
                   -> Event t ()
@@ -248,5 +341,22 @@ tellStorageRemove :: (Reflex t, Monad m, HasStorage t k m)
 tellStorageRemove k e =
   tellStorage $ smRemove k <$ e
 
+askStorageTag :: (Reflex t, GCompare k, Monad m, HasStorage t k m)
+              => k a
+              -> m (Dynamic t (Maybe a))
+askStorageTag k = do
+  dStorage <- askStorage
+  pure $ fmap runIdentity . (DMap.lookup k) <$> dStorage
 
+initializeTag :: (GCompare k, Monad m, HasStorage t k m, PostBuild t m)
+              => k a
+              -> a
+              -> m ()
+initializeTag k v = do
+  ePostBuild <- getPostBuild
+  dTag <- askStorageTag k
+  let
+    eInsert = ffilter isNothing $ current dTag <@ ePostBuild
 
+  tellStorageInsert k $ v <$ eInsert
+  pure ()

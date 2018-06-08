@@ -15,22 +15,41 @@ import Data.Functor.Identity (Identity(..))
 import GHC.Generics
 
 import Data.Dependent.Map (Some(..))
+import Data.Dependent.Sum (ShowTag(..))
+import Data.GADT.Show
+import Data.GADT.Compare
 
-import Data.Aeson (ToJSON(..), FromJSON(..))
+import Data.Aeson (ToJSON, FromJSON, encode, decode)
 
 import Storage
 
-data Foo = Foo { bar :: Int, baz :: String }
+data Foo = Foo { bar :: Bool, baz :: String }
   deriving (Eq, Ord, Show, Generic)
 
 instance ToJSON Foo where
 instance FromJSON Foo where
 
 data ExampleTag a where
-  Tag1 :: ExampleTag Bool
+  Tag1 :: ExampleTag Int
   Tag2 :: ExampleTag Foo
 
--- TODO add a GCompare instance
+instance GEq ExampleTag where
+  geq Tag1 Tag1 = Just Refl
+  geq Tag2 Tag2 = Just Refl
+  geq _ _ = Nothing
+
+instance GCompare ExampleTag where
+  gcompare Tag1 Tag1 = GEQ
+  gcompare Tag1 _ = GLT
+  gcompare _ Tag1 = GGT
+
+instance GShow ExampleTag where
+  gshowsPrec _p Tag1 = showString "Tag1"
+  gshowsPrec _p Tag2 = showString "Tag2"
+
+instance ShowTag ExampleTag Identity where
+  showTaggedPrec Tag1 = showsPrec
+  showTaggedPrec Tag2   = showsPrec
 
 instance GKey ExampleTag where
   toKey (This Tag1) = "tag1"
@@ -42,13 +61,15 @@ instance GKey ExampleTag where
       "tag2" -> Just (This Tag2)
       _ -> Nothing
 
+  keys _ = [This Tag1, This Tag2]
+
 instance ToJSONTag ExampleTag Identity where
-  toJSONTagged Tag1 (Identity x) = toJSON x
-  toJSONTagged Tag2 (Identity x) = toJSON x
+  encodeTagged Tag1 (Identity x) = encode x
+  encodeTagged Tag2 (Identity x) = encode x
 
 instance FromJSONTag ExampleTag Identity where
-  parseJSONTagged Tag1 x = Identity <$> parseJSON x
-  parseJSONTagged Tag2 x = Identity <$> parseJSON x
+  decodeTagged Tag1 x = Identity <$> decode x
+  decodeTagged Tag2 x = Identity <$> decode x
 
 
 
