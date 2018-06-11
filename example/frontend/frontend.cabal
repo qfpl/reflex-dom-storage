@@ -9,18 +9,11 @@ library
                , common
                , reflex-dom
                , static
-               , text
-               , mtl
-               , ghcjs-dom
-               , aeson
-               , dependent-sum
-               , dependent-map
+               , reflex-dom-storage
   exposed-modules:
     Frontend
   other-modules:
-      Reflex.Dom.Storage.Base
-    , Reflex.Dom.Storage.Class
-    , Storage.Example
+    Storage.Example
   ghc-options: -Wall
 
 executable frontend

@@ -6,7 +6,6 @@ Stability   : experimental
 Portability : non-portable
 -}
 {-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE RecursiveDo #-}
@@ -17,49 +16,40 @@ Portability : non-portable
 {-# LANGUAGE CPP #-}
 module Reflex.Dom.Storage.Base where
 
-import Control.Monad (void, forM_)
+import Control.Monad (void)
 import Data.Coerce (coerce)
+import Data.Foldable (traverse_)
 import Data.Functor.Identity (Identity(..))
-import Data.Maybe (isNothing, catMaybes, fromMaybe)
-import Data.Monoid hiding ((<>))
+import Data.Maybe (catMaybes)
 import Data.Proxy (Proxy(..))
-import Data.Semigroup
+import Data.Semigroup ((<>))
 
-import Control.Monad.Trans (MonadTrans, MonadIO, lift, liftIO)
+import Control.Monad.Trans (MonadTrans, MonadIO, lift)
 import Control.Monad.Fix (MonadFix)
 import Control.Monad.Ref (MonadRef(..), MonadAtomicRef)
-import Control.Monad.Exception (MonadAsyncException, MonadException)
 import Control.Monad.Reader (ReaderT, runReaderT, ask)
 
 import Reflex
-import Reflex.Network
 import Reflex.Host.Class
 import Reflex.Dom.Core hiding (Value, Error, Window)
 
 import Data.Text (Text)
-import Data.Set (Set)
 import qualified Data.Set as Set
 
 import Data.Dependent.Map (DMap, Some(..), GCompare)
 import qualified Data.Dependent.Map as DMap
 
-import Data.Aeson (ToJSON, FromJSON, Value, encode)
-import Data.Aeson.Types (Parser, Result(..), parse)
-import Data.Aeson.Encoding as E (value, encodingToLazyByteString)
 import qualified Data.ByteString.Lazy as LBS
 
 import GHCJS.DOM (currentWindowUnchecked)
-import GHCJS.DOM.Types (MonadJSM, liftJSM, toJSVal)
+import GHCJS.DOM.Types (MonadJSM)
 import GHCJS.DOM.EventM (EventM, on)
 import GHCJS.DOM.Window (Window, getLocalStorage, getSessionStorage)
 import GHCJS.DOM.WindowEventHandlers (storage)
 import GHCJS.DOM.Storage (Storage(..), getItem, setItem, removeItem)
 import GHCJS.DOM.StorageEvent
 
-import Language.Javascript.JSaddle (valToJSON)
-
 import Reflex.Dom.Builder.Immediate (wrapDomEvent)
-import Foreign.JavaScript.Utils (jsonDecode)
 
 import Data.Text.Encoding (decodeUtf8, encodeUtf8)
 import Data.ByteString.Lazy (toStrict, fromStrict)
@@ -86,8 +76,7 @@ newtype StorageT t k m a =
   StorageT {
     unStorageT :: ReaderT (Dynamic t (DMap k Identity)) (EventWriterT t (StorageMonoid k) m) a
   } deriving (Functor, Applicative, Monad, MonadIO, MonadFix, MonadHold t,
-              MonadSample t, MonadAsyncException, MonadException, PostBuild t,
-              MonadReflexCreateTrigger t, TriggerEvent t, MonadAtomicRef)
+              MonadSample t, PostBuild t, MonadReflexCreateTrigger t, TriggerEvent t, MonadAtomicRef)
 
 instance (Reflex t, GCompare k, Monad m) => HasStorage t k (StorageT t k m) where
   askStorage    = StorageT ask
@@ -245,8 +234,8 @@ writeToStorage :: ( Monad m
                -> StorageMonoid k
                -> m (StorageMonoid k)
 writeToStorage st sm = do
-  DMap.traverseWithKey (\k v -> v <$ sStore st k v) . smInserts $ sm
-  traverse (sRemove st) . Set.toList . smRemoves $ sm
+  void . DMap.traverseWithKey (\k v -> v <$ sStore st k v) . smInserts $ sm
+  traverse_ (sRemove st) . Set.toList . smRemoves $ sm
   pure sm
 
 readFromStorage :: ( Monad m
@@ -260,7 +249,7 @@ readFromStorage :: ( Monad m
                 -> m (DMap k Identity)
 readFromStorage p st = do
   let
-    readKey s@(This k) = do
+    readKey (This k) = do
       mt <- sLoad st k
       pure $ (k DMap.:=>) <$> mt
 
@@ -274,9 +263,9 @@ handleStorageEvents :: ( GKey k
                     => Proxy k
                     -> StorageType
                     -> EventM Window StorageEvent (StorageMonoid k)
-handleStorageEvents _ st = do
+-- TODO check the storage type
+handleStorageEvents _ _{- st -} = do
   eS <- ask
-  -- TODO check the storage type
 
   key :: Maybe Text <- getKey eS
   let

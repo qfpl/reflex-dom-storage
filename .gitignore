@@ -5,3 +5,4 @@ result-android
 result-ios
 .attr-cache
 ghcid-output.txt
+cabal.project.local
