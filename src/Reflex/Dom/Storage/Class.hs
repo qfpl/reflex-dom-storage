@@ -7,11 +7,18 @@ Portability : non-portable
 -}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE FunctionalDependencies #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE UndecidableInstances #-}
 module Reflex.Dom.Storage.Class where
 
 import Data.Functor.Identity (Identity(..))
 import Data.Maybe (isNothing, fromMaybe)
 import Data.Semigroup
+
+import Control.Monad.Trans (lift)
+import Control.Monad.Reader (ReaderT)
+import Control.Monad.State.Strict (StateT)
+import qualified Control.Monad.State.Lazy as Lazy (StateT)
 
 import Reflex
 
@@ -52,6 +59,18 @@ storageMonoidToEndo (StorageMonoid inserts removes) =
 class HasStorage t k m | m -> k, m -> t where
   askStorage  :: m (Dynamic t (DMap k Identity))
   tellStorage :: Event t (StorageMonoid k) -> m ()
+
+instance (Monad m, HasStorage t k m) => HasStorage t k (ReaderT r m) where
+  askStorage = lift askStorage
+  tellStorage = lift . tellStorage
+
+instance (Monad m, HasStorage t k m) => HasStorage t k (StateT r m) where
+  askStorage = lift askStorage
+  tellStorage = lift . tellStorage
+
+instance (Monad m, HasStorage t k m) => HasStorage t k (Lazy.StateT r m) where
+  askStorage = lift askStorage
+  tellStorage = lift . tellStorage
 
 tellStorageInsert :: (Reflex t, GCompare k, Monad m, HasStorage t k m)
                   => k a

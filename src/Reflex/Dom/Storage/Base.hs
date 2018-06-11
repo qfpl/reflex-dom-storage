@@ -13,8 +13,16 @@ Portability : non-portable
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE CPP #-}
-module Reflex.Dom.Storage.Base where
+module Reflex.Dom.Storage.Base (
+    StorageT(..)
+  , StorageType(..)
+  , GKey(..)
+  , ToJSONTag(..)
+  , FromJSONTag(..)
+  , runStorageT
+  ) where
 
 import Control.Monad (void)
 import Data.Coerce (coerce)
@@ -26,8 +34,11 @@ import Data.Semigroup ((<>))
 
 import Control.Monad.Trans (MonadTrans, MonadIO, lift)
 import Control.Monad.Fix (MonadFix)
-import Control.Monad.Ref (MonadRef(..), MonadAtomicRef)
-import Control.Monad.Reader (ReaderT, runReaderT, ask)
+import Control.Monad.Ref (MonadRef(..), MonadAtomicRef(..))
+import Control.Monad.Reader (ReaderT, MonadReader(..), runReaderT, ask)
+import Control.Monad.State (MonadState(..))
+import Control.Monad.Exception (MonadException, MonadAsyncException)
+import Control.Monad.Morph (hoist)
 
 import Reflex
 import Reflex.Host.Class
@@ -76,6 +87,7 @@ newtype StorageT t k m a =
   StorageT {
     unStorageT :: ReaderT (Dynamic t (DMap k Identity)) (EventWriterT t (StorageMonoid k) m) a
   } deriving (Functor, Applicative, Monad, MonadIO, MonadFix, MonadHold t,
+              MonadException, MonadAsyncException,
               MonadSample t, PostBuild t, MonadReflexCreateTrigger t, TriggerEvent t, MonadAtomicRef)
 
 instance (Reflex t, GCompare k, Monad m) => HasStorage t k (StorageT t k m) where
@@ -85,24 +97,38 @@ instance (Reflex t, GCompare k, Monad m) => HasStorage t k (StorageT t k m) wher
 instance MonadTrans (StorageT t k) where
   lift = StorageT . lift . lift
 
--- instance Requester t m => Requester t (StorageT t k m) where
---   type Request (StorageT t k m) = Request m
---   type Response (StorageT t k m) = Response m
---   {-# INLINABLE requesting #-}
---   requesting = lift . requesting
---   {-# INLINABLE requesting_ #-}
---   requesting_ = lift . requesting_
+instance Requester t m => Requester t (StorageT t k m) where
+  type Request (StorageT t k m) = Request m
+  type Response (StorageT t k m) = Response m
+  requesting = lift . requesting
+  requesting_ = lift . requesting_
 
--- instance (Monad m, HasStorage t k m) => HasStorage t k (RequesterT t request response m) where
---   askStorage = lift askStorage
---   tellStorage e = RequesterT $ _
+instance (Adjustable t m, MonadHold t m, GCompare k) => Adjustable t (StorageT t k m) where
+  runWithReplace a0 a' = StorageT $ runWithReplace (unStorageT a0) (fmapCheap unStorageT a')
+  traverseDMapWithKeyWithAdjust f dm edm = StorageT $ traverseDMapWithKeyWithAdjust (\k v -> unStorageT $ f k v) (coerce dm) (coerceEvent edm)
+  {-# INLINABLE traverseDMapWithKeyWithAdjust #-}
+  traverseIntMapWithKeyWithAdjust f dm edm = StorageT $ traverseIntMapWithKeyWithAdjust (\k v -> unStorageT $ f k v) (coerce dm) (coerceEvent edm)
+  {-# INLINABLE traverseIntMapWithKeyWithAdjust #-}
+  traverseDMapWithKeyWithAdjustWithMove f dm edm = StorageT $ traverseDMapWithKeyWithAdjustWithMove (\k v -> unStorageT $ f k v) (coerce dm) (coerceEvent edm)
+  {-# INLINABLE traverseDMapWithKeyWithAdjustWithMove #-}
 
 instance PerformEvent t m => PerformEvent t (StorageT t k m) where
   type Performable (StorageT t k m) = Performable m
-  {-# INLINABLE performEvent_ #-}
   performEvent_ = lift . performEvent_
-  {-# INLINABLE performEvent #-}
   performEvent = lift . performEvent
+
+instance MonadRef m => MonadRef (StorageT t k m) where
+  type Ref (StorageT t k m) = Ref m
+  newRef = lift . newRef
+  readRef = lift . readRef
+  writeRef r = lift . writeRef r
+
+instance (MonadQuery t q m, Monad m) => MonadQuery t q (StorageT t k m) where
+  tellQueryIncremental = lift . tellQueryIncremental
+  askQueryResult = lift askQueryResult
+  queryIncremental = lift . queryIncremental
+
+instance (Monad m, NotReady t m) => NotReady t (StorageT t k m)
 
 instance (DomBuilder t m, MonadHold t m, MonadFix m, GCompare k) => DomBuilder t (StorageT t k m) where
   type DomBuilderSpace (StorageT t k m) = DomBuilderSpace m
@@ -114,17 +140,6 @@ instance (DomBuilder t m, MonadHold t m, MonadFix m, GCompare k) => DomBuilder t
   placeRawElement = lift . placeRawElement
   wrapRawElement e = lift . wrapRawElement e
 
-instance (Monad m, NotReady t m) => NotReady t (StorageT t k m)
-
-instance (Adjustable t m, MonadHold t m, GCompare k) => Adjustable t (StorageT t k m) where
-  runWithReplace a0 a' = StorageT $ runWithReplace (unStorageT a0) (fmapCheap unStorageT a')
-  traverseDMapWithKeyWithAdjust f dm edm = StorageT $ traverseDMapWithKeyWithAdjust (\k v -> unStorageT $ f k v) (coerce dm) (coerceEvent edm)
-  {-# INLINABLE traverseDMapWithKeyWithAdjust #-}
-  traverseIntMapWithKeyWithAdjust f dm edm = StorageT $ traverseIntMapWithKeyWithAdjust (\k v -> unStorageT $ f k v) (coerce dm) (coerceEvent edm)
-  {-# INLINABLE traverseIntMapWithKeyWithAdjust #-}
-  traverseDMapWithKeyWithAdjustWithMove f dm edm = StorageT $ traverseDMapWithKeyWithAdjustWithMove (\k v -> unStorageT $ f k v) (coerce dm) (coerceEvent edm)
-  {-# INLINABLE traverseDMapWithKeyWithAdjustWithMove #-}
-
 instance HasDocument m => HasDocument (StorageT t k m)
 
 instance HasJSContext m => HasJSContext (StorageT t k m) where
@@ -134,15 +149,16 @@ instance HasJSContext m => HasJSContext (StorageT t k m) where
 instance MonadJSM m => MonadJSM (StorageT t k m)
 #endif
 
-instance MonadRef m => MonadRef (StorageT t k m) where
-  type Ref (StorageT t k m) = Ref m
-  {-# INLINABLE newRef #-}
-  newRef = lift . newRef
-  {-# INLINABLE readRef #-}
-  readRef = lift . readRef
-  {-# INLINABLE writeRef #-}
-  writeRef r = lift . writeRef r
+instance MonadReader r m => MonadReader r (StorageT t k m) where
+  ask = lift ask
+  local f (StorageT a) = StorageT . hoist (local f) $ a
+  reader = lift . reader
 
+instance MonadState s m => MonadState s (StorageT t k m) where
+  get = lift get
+  put = lift . put
+
+{-
 runPureStorageT :: ( Reflex t
                    , Monad m
                    , MonadFix m
@@ -155,6 +171,7 @@ runPureStorageT s = mdo
   (a, eChanges) <- runEventWriterT . flip runReaderT d . unStorageT $ s
   d <- foldDyn ($) DMap.empty $ storageMonoidToEndo <$> eChanges
   pure a
+-}
 
 runStorageT :: forall t k m a.
                ( Reflex t
@@ -281,4 +298,3 @@ handleStorageEvents _ _{- st -} = do
           case decodeTagged k . fromStrict . encodeUtf8 $ nv of
             Just v -> pure $ smInsert k (runIdentity v)
             Nothing -> pure mempty
-
