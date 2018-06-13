@@ -1,9 +1,10 @@
 A first pass at a `reflex` API for working with local storage.
 
-This is an Obelisk project at the moment.  I'll extract it out into a library soon.
+There is an Obelisk project in `example` you can use to play around with this.
 
-You should be able to do `ob run` and then open a few tabs at http://localhost;8000 and watch them interact with each other.
+You should be able to do `ob run` and then open a few tabs at http://localhost:8000 and watch them interact with each other.
 
+The relevant bits of the code are:
 ```haskell
 body :: MonadWidget t m => m ()
 body = do
@@ -31,3 +32,4 @@ counter = el "div" $ do
   -- insert the new value for Tag1 into local storage
   tellStorageInsert Tag1 $ (&) <$> current dTag1 <@> eChange
 ```
+along with some instances around the `ExampleTag` so that the keys can be marshalled to and from `Text` and the values can be marshalled to and from JSON.
