@@ -65,6 +65,9 @@ import Reflex.Dom.Builder.Immediate (wrapDomEvent)
 import Data.Text.Encoding (decodeUtf8, encodeUtf8)
 import Data.ByteString.Lazy (toStrict, fromStrict)
 
+import Reflex.Dom.Routing.Nested
+import Reflex.Dom.Routing.Writer
+
 import Reflex.Dom.Storage.Class
 
 class GKey t where
@@ -157,6 +160,13 @@ instance MonadReader r m => MonadReader r (StorageT t k m) where
 instance MonadState s m => MonadState s (StorageT t k m) where
   get = lift get
   put = lift . put
+
+instance HasRoute t r m => HasRoute t r (StorageT t k m) where
+  routeContext = lift routeContext
+  withSegments f (StorageT s) = StorageT $ hoist (withSegments f) s
+
+instance RouteWriter t r m => RouteWriter t r (StorageT t k m) where
+  tellRoute = lift . tellRoute
 
 {-
 runPureStorageT :: ( Reflex t

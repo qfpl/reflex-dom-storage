@@ -22,6 +22,9 @@ import qualified Control.Monad.State.Lazy as Lazy (StateT)
 
 import Reflex
 
+import Reflex.Dom.Routing.Nested
+import Reflex.Dom.Routing.Writer
+
 import Data.Set (Set)
 import qualified Data.Set as Set
 
@@ -56,19 +59,27 @@ storageMonoidToEndo (StorageMonoid inserts removes) =
   DMap.filterWithKey (\k _ -> Set.notMember (This k) removes) .
   DMap.union inserts
 
-class HasStorage t k m | m -> k, m -> t where
+class Monad m => HasStorage t k m | m -> k, m -> t where
   askStorage  :: m (Dynamic t (DMap k Identity))
   tellStorage :: Event t (StorageMonoid k) -> m ()
 
-instance (Monad m, HasStorage t k m) => HasStorage t k (ReaderT r m) where
+instance HasStorage t k m => HasStorage t k (ReaderT r m) where
   askStorage = lift askStorage
   tellStorage = lift . tellStorage
 
-instance (Monad m, HasStorage t k m) => HasStorage t k (StateT r m) where
+instance HasStorage t k m => HasStorage t k (StateT r m) where
   askStorage = lift askStorage
   tellStorage = lift . tellStorage
 
-instance (Monad m, HasStorage t k m) => HasStorage t k (Lazy.StateT r m) where
+instance HasStorage t k m => HasStorage t k (Lazy.StateT r m) where
+  askStorage = lift askStorage
+  tellStorage = lift . tellStorage
+
+instance HasStorage t k m => HasStorage t k (RouteT t r m) where
+  askStorage = lift askStorage
+  tellStorage = lift . tellStorage
+
+instance HasStorage t k m => HasStorage t k (RouteWriterT t r m) where
   askStorage = lift askStorage
   tellStorage = lift . tellStorage
 
