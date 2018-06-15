@@ -19,9 +19,9 @@ import Data.Dependent.Sum (ShowTag(..))
 import Data.GADT.Show
 import Data.GADT.Compare
 
-import Data.Aeson (ToJSON, FromJSON, encode, decode)
+import Data.Aeson (ToJSON(..), FromJSON(..))
 
-import Reflex.Dom.Storage.Base
+import Data.GADT.Aeson
 
 data Foo = Foo { bar :: Bool, baz :: String }
   deriving (Eq, Ord, Show, Generic)
@@ -64,12 +64,12 @@ instance GKey ExampleTag where
   keys _ = [This Tag1, This Tag2]
 
 instance ToJSONTag ExampleTag Identity where
-  encodeTagged Tag1 (Identity x) = encode x
-  encodeTagged Tag2 (Identity x) = encode x
+  toJSONTagged Tag1 (Identity x) = toJSON x
+  toJSONTagged Tag2 (Identity x) = toJSON x
 
 instance FromJSONTag ExampleTag Identity where
-  decodeTagged Tag1 x = Identity <$> decode x
-  decodeTagged Tag2 x = Identity <$> decode x
+  parseJSONTagged Tag1 x = Identity <$> parseJSON x
+  parseJSONTagged Tag2 x = Identity <$> parseJSON x
 
 
 

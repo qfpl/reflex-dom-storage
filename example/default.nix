@@ -8,6 +8,11 @@ project ./. ({ ... }: {
   ios.bundleIdentifier = "systems.obsidian.obelisk.examples.minimal";
   ios.bundleName = "Obelisk Minimal Example";
   overrides = self: super: {
-    reflex-dom-storage = super.callCabal2nix "reflex-dom-storage" ../. {};
+      reflex-dom-contrib = 
+        super.callCabal2nix "reflex-dom-contrib" (import ../nix/reflex-dom-contrib.nix) {};
+      reflex-dom-nested-routing = 
+        super.callCabal2nix "reflex-dom-nested-routing" (import ../nix/reflex-dom-nested-routing.nix) {};
+    reflex-dom-storage = 
+        super.callCabal2nix "reflex-dom-storage" ../. {};
   };
 })

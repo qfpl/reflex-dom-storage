@@ -18,9 +18,6 @@ Portability : non-portable
 module Reflex.Dom.Storage.Base (
     StorageT(..)
   , StorageType(..)
-  , GKey(..)
-  , ToJSONTag(..)
-  , FromJSONTag(..)
   , runStorageT
   ) where
 
@@ -50,8 +47,6 @@ import qualified Data.Set as Set
 import Data.Dependent.Map (DMap, Some(..), GCompare)
 import qualified Data.Dependent.Map as DMap
 
-import qualified Data.ByteString.Lazy as LBS
-
 import GHCJS.DOM (currentWindowUnchecked)
 import GHCJS.DOM.Types (MonadJSM)
 import GHCJS.DOM.EventM (EventM, on)
@@ -62,24 +57,12 @@ import GHCJS.DOM.StorageEvent
 
 import Reflex.Dom.Builder.Immediate (wrapDomEvent)
 
-import Data.Text.Encoding (decodeUtf8, encodeUtf8)
-import Data.ByteString.Lazy (toStrict, fromStrict)
-
 import Reflex.Dom.Routing.Nested
 import Reflex.Dom.Routing.Writer
 
 import Reflex.Dom.Storage.Class
 
-class GKey t where
-  toKey :: Some t -> Text
-  fromKey :: Text -> Maybe (Some t)
-  keys :: Proxy t -> [Some t]
-
-class ToJSONTag t f where
-  encodeTagged :: t a -> f a -> LBS.ByteString
-
-class FromJSONTag t f where
-  decodeTagged :: t a -> LBS.ByteString -> Maybe (f a)
+import Data.GADT.Aeson
 
 data StorageType =
     SessionStorage
@@ -233,7 +216,7 @@ sStore :: (MonadJSM m, GKey k, ToJSONTag k Identity)
        -> m ()
 sStore st k v = do
   s <- getStorage st
-  setItem s (toKey (This k)) (decodeUtf8 . toStrict . encodeTagged k $ v)
+  setItem s (toKey (This k)) (encodeTagged k v)
 
 sLoad :: (MonadJSM m, GKey k, FromJSONTag k Identity)
       => StorageType
@@ -242,7 +225,7 @@ sLoad :: (MonadJSM m, GKey k, FromJSONTag k Identity)
 sLoad st k = do
   s <- getStorage st
   mt <- getItem s (toKey (This k))
-  pure $ decodeTagged k . fromStrict . encodeUtf8 =<< mt
+  pure $ decodeTagged k =<< mt
 
 sRemove :: (MonadJSM m, GKey k)
         => StorageType
@@ -305,6 +288,6 @@ handleStorageEvents _ _{- st -} = do
         Nothing ->
           pure $ smRemove k
         Just nv ->
-          case decodeTagged k . fromStrict . encodeUtf8 $ nv of
+          case decodeTagged k nv of
             Just v -> pure $ smInsert k (runIdentity v)
             Nothing -> pure mempty
