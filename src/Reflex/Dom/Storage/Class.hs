@@ -13,7 +13,6 @@ module Reflex.Dom.Storage.Class where
 
 import Data.Functor.Identity (Identity(..))
 import Data.Maybe (isNothing, fromMaybe)
-import Data.Semigroup
 
 import Control.Monad.Trans (lift)
 import Control.Monad.Reader (ReaderT)
@@ -21,47 +20,25 @@ import Control.Monad.State.Strict (StateT)
 import qualified Control.Monad.State.Lazy as Lazy (StateT)
 
 import Reflex
+import Data.Functor.Misc (ComposeMaybe(..))
 
 import Reflex.Dom.Routing.Nested
 import Reflex.Dom.Routing.Writer
 
-import Data.Set (Set)
-import qualified Data.Set as Set
-
-import Data.Dependent.Map (DMap, Some(..), GCompare)
 import qualified Data.Dependent.Map as DMap
+import Data.GADT.Compare (GCompare)
 
-data StorageMonoid k =
-  StorageMonoid {
-    smInserts :: DMap k Identity
-  , smRemoves :: Set (Some k)
-  }
+pdmInsert :: GCompare k => k a -> a -> PatchDMap k Identity
+pdmInsert k =
+  PatchDMap . DMap.singleton k . ComposeMaybe . Just . Identity
 
-instance GCompare k => Semigroup (StorageMonoid k) where
-  (StorageMonoid i1 r1) <> (StorageMonoid i2 r2) =
-    StorageMonoid (DMap.union i1 i2) (Set.union r1 r2)
-
-instance GCompare k => Monoid (StorageMonoid k) where
-  mempty = StorageMonoid DMap.empty Set.empty
-  mappend = (<>)
-
-smInsert :: GCompare k => k a -> a -> StorageMonoid k
-smInsert k a = StorageMonoid (DMap.singleton k (Identity a)) mempty
-
-smRemove :: k a -> StorageMonoid k
-smRemove k = StorageMonoid DMap.empty (Set.singleton (This k))
-
-storageMonoidToEndo :: GCompare k
-                    => StorageMonoid k
-                    -> DMap k Identity
-                    -> DMap k Identity
-storageMonoidToEndo (StorageMonoid inserts removes) =
-  DMap.filterWithKey (\k _ -> Set.notMember (This k) removes) .
-  DMap.union inserts
+pdmRemove :: k a -> PatchDMap k Identity
+pdmRemove k =
+  PatchDMap . DMap.singleton k . ComposeMaybe $ Nothing
 
 class Monad m => HasStorage t k m | m -> k, m -> t where
-  askStorage  :: m (Dynamic t (DMap k Identity))
-  tellStorage :: Event t (StorageMonoid k) -> m ()
+  askStorage  :: m (Incremental t (PatchDMap k Identity))
+  tellStorage :: Event t (PatchDMap k Identity) -> m ()
 
 instance HasStorage t k m => HasStorage t k (ReaderT r m) where
   askStorage = lift askStorage
@@ -88,21 +65,21 @@ tellStorageInsert :: (Reflex t, GCompare k, Monad m, HasStorage t k m)
                   -> Event t a
                   -> m ()
 tellStorageInsert k e =
-  tellStorage $ smInsert k <$> e
+  tellStorage $ pdmInsert k <$> e
 
 tellStorageRemove :: (Reflex t, Monad m, HasStorage t k m)
                   => k a
                   -> Event t ()
                   -> m ()
 tellStorageRemove k e =
-  tellStorage $ smRemove k <$ e
+  tellStorage $ pdmRemove k <$ e
 
 askStorageTag :: (Reflex t, GCompare k, Monad m, HasStorage t k m)
               => k a
               -> m (Dynamic t (Maybe a))
 askStorageTag k = do
   dStorage <- askStorage
-  pure $ fmap runIdentity . DMap.lookup k <$> dStorage
+  pure $ fmap runIdentity . DMap.lookup k <$> incrementalToDynamic dStorage
 
 askStorageTagDef :: (Reflex t, GCompare k, Monad m, HasStorage t k m)
                  => k a

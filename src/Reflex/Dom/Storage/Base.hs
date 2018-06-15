@@ -23,7 +23,6 @@ module Reflex.Dom.Storage.Base (
 
 import Control.Monad (void)
 import Data.Coerce (coerce)
-import Data.Foldable (traverse_)
 import Data.Functor.Identity (Identity(..))
 import Data.Maybe (catMaybes)
 import Data.Proxy (Proxy(..))
@@ -40,9 +39,9 @@ import Control.Monad.Morph (hoist)
 import Reflex
 import Reflex.Host.Class
 import Reflex.Dom.Core hiding (Value, Error, Window)
+import Data.Functor.Misc (ComposeMaybe(..))
 
 import Data.Text (Text)
-import qualified Data.Set as Set
 
 import Data.Dependent.Map (DMap, Some(..), GCompare)
 import qualified Data.Dependent.Map as DMap
@@ -71,7 +70,7 @@ data StorageType =
 
 newtype StorageT t k m a =
   StorageT {
-    unStorageT :: ReaderT (Dynamic t (DMap k Identity)) (EventWriterT t (StorageMonoid k) m) a
+    unStorageT :: ReaderT (Incremental t (PatchDMap k Identity)) (EventWriterT t (PatchDMap k Identity) m) a
   } deriving (Functor, Applicative, Monad, MonadIO, MonadFix, MonadHold t,
               MonadException, MonadAsyncException,
               MonadSample t, PostBuild t, MonadReflexCreateTrigger t, TriggerEvent t, MonadAtomicRef)
@@ -185,7 +184,7 @@ runStorageT :: forall t k m a.
             -> StorageT t k m a
             -> m a
 runStorageT st s = mdo
-  (a, eAppChanges) <- runEventWriterT . flip runReaderT d . unStorageT $ s
+  (a, eAppChanges) <- runEventWriterT . flip runReaderT i . unStorageT $ s
 
   eAppChanges' <- performEvent $ writeToStorage st <$> eAppChanges
 
@@ -197,7 +196,7 @@ runStorageT st s = mdo
   let
     eChanges = eWindowChanges <> eAppChanges'
 
-  d <- foldDyn ($) iStorage $ storageMonoidToEndo <$> eChanges
+  i <- holdIncremental iStorage eChanges
 
   pure a
 
@@ -235,18 +234,22 @@ sRemove st k = do
   s <- getStorage st
   removeItem s (toKey k)
 
-writeToStorage :: ( Monad m
+writeToStorage :: forall m k.
+                  ( Monad m
                   , MonadJSM m
                   , GKey k
                   , ToJSONTag k Identity
                   )
                => StorageType
-               -> StorageMonoid k
-               -> m (StorageMonoid k)
-writeToStorage st sm = do
-  void . DMap.traverseWithKey (\k v -> v <$ sStore st k v) . smInserts $ sm
-  traverse_ (sRemove st) . Set.toList . smRemoves $ sm
-  pure sm
+               -> PatchDMap k Identity
+               -> m (PatchDMap k Identity)
+writeToStorage st pdm = do
+  let
+    change :: k a -> ComposeMaybe Identity a -> m (ComposeMaybe Identity a)
+    change k v@(ComposeMaybe (Just a)) = v <$ sStore st k a
+    change k v@(ComposeMaybe Nothing)  = v <$ sRemove st (This k)
+  void . DMap.traverseWithKey change . unPatchDMap $ pdm
+  pure pdm
 
 readFromStorage :: ( Monad m
                    , MonadJSM m
@@ -272,7 +275,7 @@ handleStorageEvents :: ( GKey k
                        )
                     => Proxy k
                     -> StorageType
-                    -> EventM Window StorageEvent (StorageMonoid k)
+                    -> EventM Window StorageEvent (PatchDMap k Identity)
 -- TODO check the storage type
 handleStorageEvents _ _{- st -} = do
   eS <- ask
@@ -286,8 +289,8 @@ handleStorageEvents _ _{- st -} = do
       newValue :: Maybe Text <- getNewValue eS
       case newValue of
         Nothing ->
-          pure $ smRemove k
+          pure . pdmRemove $ k
         Just nv ->
           case decodeTagged k nv of
-            Just v -> pure $ smInsert k (runIdentity v)
+            Just v -> pure . pdmInsert k . runIdentity $ v
             Nothing -> pure mempty
