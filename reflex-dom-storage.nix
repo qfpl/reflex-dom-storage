@@ -1,7 +1,6 @@
 { mkDerivation, aeson, base, bytestring, containers, dependent-map
 , dependent-sum, exception-transformers, ghcjs-dom, jsaddle, mmorph
-, mtl, ref-tf, reflex, reflex-dom-core, reflex-dom-nested-routing
-, stdenv, text
+, mtl, ref-tf, reflex, reflex-dom-core, stdenv, text
 }:
 mkDerivation {
   pname = "reflex-dom-storage";
@@ -10,7 +9,7 @@ mkDerivation {
   libraryHaskellDepends = [
     aeson base bytestring containers dependent-map dependent-sum
     exception-transformers ghcjs-dom jsaddle mmorph mtl ref-tf reflex
-    reflex-dom-core reflex-dom-nested-routing text
+    reflex-dom-core text
   ];
   license = stdenv.lib.licenses.bsd3;
 }

@@ -22,9 +22,6 @@ import qualified Control.Monad.State.Lazy as Lazy (StateT)
 import Reflex
 import Data.Functor.Misc (ComposeMaybe(..))
 
-import Reflex.Dom.Routing.Nested
-import Reflex.Dom.Routing.Writer
-
 import qualified Data.Dependent.Map as DMap
 import Data.GADT.Compare (GCompare)
 
@@ -49,14 +46,6 @@ instance HasStorage t k m => HasStorage t k (StateT r m) where
   tellStorage = lift . tellStorage
 
 instance HasStorage t k m => HasStorage t k (Lazy.StateT r m) where
-  askStorage = lift askStorage
-  tellStorage = lift . tellStorage
-
-instance HasStorage t k m => HasStorage t k (RouteT t r m) where
-  askStorage = lift askStorage
-  tellStorage = lift . tellStorage
-
-instance HasStorage t k m => HasStorage t k (RouteWriterT t r m) where
   askStorage = lift askStorage
   tellStorage = lift . tellStorage
 

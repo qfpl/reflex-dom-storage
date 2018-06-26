@@ -56,9 +56,6 @@ import GHCJS.DOM.StorageEvent
 
 import Reflex.Dom.Builder.Immediate (wrapDomEvent)
 
-import Reflex.Dom.Routing.Nested
-import Reflex.Dom.Routing.Writer
-
 import Reflex.Dom.Storage.Class
 
 import Data.GADT.Aeson
@@ -142,13 +139,6 @@ instance MonadReader r m => MonadReader r (StorageT t k m) where
 instance MonadState s m => MonadState s (StorageT t k m) where
   get = lift get
   put = lift . put
-
-instance HasRoute t r m => HasRoute t r (StorageT t k m) where
-  routeContext = lift routeContext
-  withSegments f (StorageT s) = StorageT $ hoist (withSegments f) s
-
-instance RouteWriter t r m => RouteWriter t r (StorageT t k m) where
-  tellRoute = lift . tellRoute
 
 {-
 runPureStorageT :: ( Reflex t
