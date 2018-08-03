@@ -67,13 +67,15 @@ data StorageType =
 
 newtype StorageT t k m a =
   StorageT {
-    unStorageT :: ReaderT (Incremental t (PatchDMap k Identity)) (EventWriterT t (PatchDMap k Identity) m) a
+    unStorageT :: ReaderT (DMap k Identity, Event t (PatchDMap k Identity)) (EventWriterT t (PatchDMap k Identity) m) a
   } deriving (Functor, Applicative, Monad, MonadIO, MonadFix, MonadHold t,
               MonadException, MonadAsyncException,
               MonadSample t, PostBuild t, MonadReflexCreateTrigger t, TriggerEvent t, MonadAtomicRef)
 
-instance (Reflex t, GCompare k, Monad m) => HasStorage t k (StorageT t k m) where
-  askStorage    = StorageT ask
+instance (Reflex t, GCompare k, MonadHold t m) => HasStorage t k (StorageT t k m) where
+  askStorage    = StorageT $ do
+    (i, e) <- ask
+    holdIncremental i e
   tellStorage e = StorageT . lift $ tellEvent e
 
 instance MonadTrans (StorageT t k) where
@@ -173,20 +175,15 @@ runStorageT :: forall t k m a.
             => StorageType
             -> StorageT t k m a
             -> m a
-runStorageT st s = mdo
-  (a, eAppChanges) <- runEventWriterT . flip runReaderT i . unStorageT $ s
-
-  eAppChanges' <- performEvent $ writeToStorage st <$> eAppChanges
+runStorageT st s = do
+  iStorage <- readFromStorage (Proxy :: Proxy k) st
 
   window <- currentWindowUnchecked
   eWindowChanges <- wrapDomEvent window (`on` storage) $ handleStorageEvents (Proxy :: Proxy k) st
 
-  iStorage <- readFromStorage (Proxy :: Proxy k) st
-
-  let
-    eChanges = eWindowChanges <> eAppChanges'
-
-  i <- holdIncremental iStorage eChanges
+  rec (a, eAppChanges) <- runEventWriterT . flip runReaderT (iStorage, eStorage) . unStorageT $ s
+      eAppChanges' <- performEvent $ writeToStorage st <$> eAppChanges
+      let eStorage = eWindowChanges <> eAppChanges'
 
   pure a
 
