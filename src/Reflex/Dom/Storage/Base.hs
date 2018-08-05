@@ -67,16 +67,14 @@ data StorageType =
 
 newtype StorageT t k m a =
   StorageT {
-    unStorageT :: ReaderT (DMap k Identity, Event t (PatchDMap k Identity)) (EventWriterT t (PatchDMap k Identity) m) a
+    unStorageT :: EventWriterT t (PatchDMap k Identity) (ReaderT (Incremental t (PatchDMap k Identity)) m) a
   } deriving (Functor, Applicative, Monad, MonadIO, MonadFix, MonadHold t,
               MonadException, MonadAsyncException,
               MonadSample t, PostBuild t, MonadReflexCreateTrigger t, TriggerEvent t, MonadAtomicRef)
 
 instance (Reflex t, GCompare k, MonadHold t m) => HasStorage t k (StorageT t k m) where
-  askStorage    = StorageT $ do
-    (i, e) <- ask
-    holdIncremental i e
-  tellStorage e = StorageT . lift $ tellEvent e
+  askStorage    = StorageT ask
+  tellStorage e = StorageT $ tellEvent e
 
 instance MonadTrans (StorageT t k) where
   lift = StorageT . lift . lift
@@ -133,10 +131,10 @@ instance HasJSContext m => HasJSContext (StorageT t k m) where
 instance MonadJSM m => MonadJSM (StorageT t k m)
 #endif
 
-instance MonadReader r m => MonadReader r (StorageT t k m) where
-  ask = lift ask
-  local f (StorageT a) = StorageT . hoist (local f) $ a
-  reader = lift . reader
+-- instance MonadReader r m => MonadReader r (StorageT t k m) where
+--   ask = lift ask
+--   local f (StorageT a) = StorageT . hoist (local f) $ a
+--   reader = lift . reader
 
 instance MonadState s m => MonadState s (StorageT t k m) where
   get = lift get
@@ -181,9 +179,10 @@ runStorageT st s = do
   window <- currentWindowUnchecked
   eWindowChanges <- wrapDomEvent window (`on` storage) $ handleStorageEvents (Proxy :: Proxy k) st
 
-  rec (a, eAppChanges) <- runEventWriterT . flip runReaderT (iStorage, eStorage) . unStorageT $ s
+  rec (a, eAppChanges) <- flip runReaderT i . runEventWriterT . unStorageT $ s
       eAppChanges' <- performEvent $ writeToStorage st <$> eAppChanges
       let eStorage = eWindowChanges <> eAppChanges'
+      i <- holdIncremental iStorage eStorage
 
   pure a
 
