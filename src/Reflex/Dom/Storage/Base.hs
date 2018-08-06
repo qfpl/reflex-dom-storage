@@ -173,16 +173,15 @@ runStorageT :: forall t k m a.
             => StorageType
             -> StorageT t k m a
             -> m a
-runStorageT st s = do
-  iStorage <- readFromStorage (Proxy :: Proxy k) st
-
+runStorageT st s = mdo
   window <- currentWindowUnchecked
   eWindowChanges <- wrapDomEvent window (`on` storage) $ handleStorageEvents (Proxy :: Proxy k) st
 
-  rec (a, eAppChanges) <- flip runReaderT i . runEventWriterT . unStorageT $ s
-      eAppChanges' <- performEvent $ writeToStorage st <$> eAppChanges
-      let eStorage = eWindowChanges <> eAppChanges'
-      i <- holdIncremental iStorage eStorage
+  iStorage <- readFromStorage (Proxy :: Proxy k) st
+  i <- holdIncremental iStorage eWindowChanges
+
+  (a, eAppChanges) <- flip runReaderT i . runEventWriterT . unStorageT $ s
+  eAppChanges' <- performEvent $ writeToStorage st <$> eAppChanges
 
   pure a
 

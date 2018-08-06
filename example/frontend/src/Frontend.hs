@@ -16,6 +16,8 @@ import Data.Bool (bool)
 import Data.Functor.Identity (Identity(..))
 import Data.Maybe (fromMaybe)
 
+import Control.Lens
+
 import qualified Data.Text as Text
 import qualified Data.Dependent.Map as DMap
 
@@ -34,6 +36,17 @@ body = do
   void . runStorageT LocalStorage $ do
     initializeTag Tag1 0
     counter
+    foo
+
+foo :: (MonadWidget t m, HasStorage t ExampleTag m) => m ()
+foo = el "div" $ do
+  dTag2 <- askStorageTagDef Tag2 $ Foo False "Hi"
+  dBool <- holdUniqDyn $ bar <$> dTag2
+  iBool <- sample . current $ dBool
+  let eBool = updated dBool
+  cb <- checkbox iBool $ def & setValue .~ eBool
+
+  tellStorageInsert Tag2 $ (\x b -> x { bar = b})  <$> current dTag2 <@> (cb ^. checkbox_change)
 
 counter :: (MonadWidget t m, HasStorage t ExampleTag m) => m ()
 counter = el "div" $ do
@@ -50,6 +63,5 @@ counter = el "div" $ do
       ]
 
   tellStorageInsert Tag1 $ (&) <$> current dTag1 <@> eChange
-
 
 

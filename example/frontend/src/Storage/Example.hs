@@ -42,6 +42,7 @@ instance GCompare ExampleTag where
   gcompare Tag1 Tag1 = GEQ
   gcompare Tag1 _ = GLT
   gcompare _ Tag1 = GGT
+  gcompare Tag2 Tag2 = GEQ
 
 instance GShow ExampleTag where
   gshowsPrec _p Tag1 = showString "Tag1"
