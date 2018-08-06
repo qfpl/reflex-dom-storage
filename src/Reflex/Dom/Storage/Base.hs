@@ -178,10 +178,10 @@ runStorageT st s = mdo
   eWindowChanges <- wrapDomEvent window (`on` storage) $ handleStorageEvents (Proxy :: Proxy k) st
 
   iStorage <- readFromStorage (Proxy :: Proxy k) st
-  i <- holdIncremental iStorage eWindowChanges
+  i <- holdIncremental iStorage $ eWindowChanges <> eAppChanges
 
   (a, eAppChanges) <- runEventWriterT . flip runReaderT i . unStorageT $ s
-  eAppChanges' <- performEvent $ writeToStorage st <$> eAppChanges
+  performEvent_ $ writeToStorage st <$> eAppChanges
 
   pure a
 
@@ -227,14 +227,13 @@ writeToStorage :: forall m k.
                   )
                => StorageType
                -> PatchDMap k Identity
-               -> m (PatchDMap k Identity)
+               -> m ()
 writeToStorage st pdm = do
   let
     change :: k a -> ComposeMaybe Identity a -> m (ComposeMaybe Identity a)
     change k v@(ComposeMaybe (Just a)) = v <$ sStore st k a
     change k v@(ComposeMaybe Nothing)  = v <$ sRemove st (This k)
   void . DMap.traverseWithKey change . unPatchDMap $ pdm
-  pure pdm
 
 readFromStorage :: ( Monad m
                    , MonadJSM m
