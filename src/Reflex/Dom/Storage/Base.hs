@@ -72,7 +72,7 @@ newtype StorageT t k m a =
               MonadException, MonadAsyncException,
               MonadSample t, PostBuild t, MonadReflexCreateTrigger t, TriggerEvent t, MonadAtomicRef)
 
-instance (Reflex t, GCompare k, MonadHold t m) => HasStorage t k (StorageT t k m) where
+instance (Reflex t, Monad m, GCompare k) => HasStorage t k (StorageT t k m) where
   askStorage    = StorageT ask
   tellStorage e = StorageT $ tellEvent e
 
