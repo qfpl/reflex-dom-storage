@@ -71,6 +71,3 @@ instance ToJSONTag ExampleTag Identity where
 instance FromJSONTag ExampleTag Identity where
   parseJSONTagged Tag1 x = Identity <$> parseJSON x
   parseJSONTagged Tag2 x = Identity <$> parseJSON x
-
-
-

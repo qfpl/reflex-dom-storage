@@ -1,42 +1,39 @@
+{-|
+Copyright   : (c) 2018, Commonwealth Scientific and Industrial Research Organisation
+License     : BSD3
+Maintainer  : dave.laing.80@gmail.com
+Stability   : experimental
+Portability : non-portable
+-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE FlexibleContexts #-}
 module Frontend where
 
-import qualified Data.Text as T
+import Data.Functor (void)
+import Obelisk.Frontend
+import Obelisk.Route
 import Reflex.Dom.Core
-
-import Common.Api
-import Static
-
-import Control.Applicative (liftA2)
-import Control.Monad (void)
-import Data.Bool (bool)
-import Data.Functor.Identity (Identity(..))
-import Data.Maybe (fromMaybe)
 
 import Control.Lens
 
-import qualified Data.Text as Text
-import qualified Data.Dependent.Map as DMap
+import Common.Route
 
 import Reflex.Dom.Storage.Base
 import Reflex.Dom.Storage.Class
 import Storage.Example
 
-frontend :: (StaticWidget x (), Widget x ())
-frontend = (head', body)
-  where
-    head' = el "title" $ text "Testing storage"
-
-body :: MonadWidget t m => m ()
-body = do
-  text "Testing storage"
-  void . runStorageT LocalStorage $ do
-    initializeTag Tag1 0
-    counter
-    foo
+frontend :: Frontend (R FrontendRoute)
+frontend = Frontend
+  { _frontend_head = el "title" $ text "Obelisk Minimal Example"
+  , _frontend_body = prerender (text "Loading...") $ do
+    text "Testing storage"
+    void . runStorageT LocalStorage $ do
+      initializeTag Tag1 0
+      counter
+      foo
+  }
 
 foo :: (MonadWidget t m, HasStorage t ExampleTag m) => m ()
 foo = el "div" $ do
@@ -63,5 +60,3 @@ counter = el "div" $ do
       ]
 
   tellStorageInsert Tag1 $ (&) <$> current dTag1 <@> eChange
-
-

@@ -7,23 +7,25 @@ library
   hs-source-dirs: src
   build-depends: base
                , common
+               , obelisk-frontend
+               , obelisk-route
                , reflex-dom
-               , static
+               , obelisk-generated-static
                , reflex-dom-storage
+               , text
   exposed-modules:
     Frontend
-  other-modules:
-    Storage.Example
   ghc-options: -Wall
 
 executable frontend
   main-is: main.hs
-  hs-source-dirs: src
+  hs-source-dirs: src-bin
   build-depends: base
                , common
+               , obelisk-frontend
+               , obelisk-route
                , reflex-dom
-               , static
-               , text
+               , obelisk-generated-static
                , frontend
   --TODO: Make these ghc-options optional
   ghc-options: -threaded
