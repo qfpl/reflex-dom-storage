@@ -24,6 +24,7 @@ module Reflex.Dom.Storage.Base (
 import Control.Monad (void)
 import Data.Coerce (coerce)
 import Data.Functor.Identity (Identity(..))
+import Data.Constraint (Dict (..))
 import Data.Maybe (catMaybes)
 import Data.Proxy (Proxy(..))
 import Data.Semigroup ((<>))
@@ -139,6 +140,17 @@ instance MonadReader r m => MonadReader r (StorageT t k m) where
 instance MonadState s m => MonadState s (StorageT t k m) where
   get = lift get
   put = lift . put
+
+instance EventWriter t w m => EventWriter t w (StorageT t k m) where
+  tellEvent = lift . tellEvent
+
+instance Prerender js m => Prerender js (StorageT t k m) where
+  prerenderClientDict = fmap (\Dict -> Dict) (prerenderClientDict :: Maybe (Dict (PrerenderClientConstraint js m)))
+
+instance HasJS x m => HasJS x (StorageT t k m) where
+  type JSX (StorageT t k m) = JSX m
+  liftJS = lift . liftJS
+
 
 {-
 runPureStorageT :: ( Reflex t
