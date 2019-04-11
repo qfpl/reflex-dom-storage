@@ -27,7 +27,7 @@ import Storage.Example
 frontend :: Frontend (R FrontendRoute)
 frontend = Frontend
   { _frontend_head = el "title" $ text "Obelisk Minimal Example"
-  , _frontend_body = prerender (text "Loading...") $ do
+  , _frontend_body = prerender_ (text "Loading...") $ do
     text "Testing storage"
     void . runStorageT LocalStorage $ do
       initializeTag Tag1 0
