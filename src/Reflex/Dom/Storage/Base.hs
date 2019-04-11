@@ -24,13 +24,13 @@ module Reflex.Dom.Storage.Base (
 import Control.Monad (void)
 import Data.Coerce (coerce)
 import Data.Functor.Identity (Identity(..))
-import Data.Constraint (Dict (..))
 import Data.Maybe (catMaybes)
 import Data.Proxy (Proxy(..))
 import Data.Semigroup ((<>))
 
 import Control.Monad.Trans (MonadTrans, MonadIO, lift)
 import Control.Monad.Fix (MonadFix)
+import Control.Monad.Primitive (PrimMonad(..))
 import Control.Monad.Ref (MonadRef(..), MonadAtomicRef(..))
 import Control.Monad.Reader (ReaderT, MonadReader(..), runReaderT, ask)
 import Control.Monad.State (MonadState(..))
@@ -70,7 +70,7 @@ newtype StorageT t k m a =
   StorageT {
     unStorageT :: ReaderT (Incremental t (PatchDMap k Identity)) (EventWriterT t (PatchDMap k Identity) m) a
   } deriving (Functor, Applicative, Monad, MonadIO, MonadFix, MonadHold t,
-              MonadException, MonadAsyncException,
+              MonadException, MonadAsyncException, DomRenderHook t,
               MonadSample t, PostBuild t, MonadReflexCreateTrigger t, TriggerEvent t, MonadAtomicRef)
 
 instance (Reflex t, Monad m, GCompare k) => HasStorage t k (StorageT t k m) where
@@ -144,8 +144,18 @@ instance MonadState s m => MonadState s (StorageT t k m) where
 instance EventWriter t w m => EventWriter t w (StorageT t k m) where
   tellEvent = lift . tellEvent
 
-instance Prerender js m => Prerender js (StorageT t k m) where
-  prerenderClientDict = fmap (\Dict -> Dict) (prerenderClientDict :: Maybe (Dict (PrerenderClientConstraint js m)))
+instance PrimMonad m => PrimMonad (StorageT t k m) where
+  type PrimState (StorageT t k m) = PrimState m
+  primitive = lift . primitive
+
+instance (Prerender js t m, Reflex t, Monad m, GCompare k) => Prerender js t (StorageT t k m) where
+  type Client (StorageT t k m) = StorageT t k (Client m)
+  prerender server client = StorageT $ do
+    env <- ask
+    d <- lift . lift $ prerender (runEventWriterT . runReaderT (unStorageT server) $ env) (runEventWriterT . runReaderT (unStorageT client) $ env)
+    let (a, r) = splitDynPure d
+    lift . tellEvent $ switchPromptlyDyn r
+    pure a
 
 instance HasJS x m => HasJS x (StorageT t k m) where
   type JSX (StorageT t k m) = JSX m
