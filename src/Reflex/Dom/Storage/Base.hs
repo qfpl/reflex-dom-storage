@@ -23,10 +23,10 @@ module Reflex.Dom.Storage.Base (
 
 import Control.Monad (void)
 import Data.Coerce (coerce)
+import Data.Foldable (fold)
 import Data.Functor.Identity (Identity(..))
 import Data.Maybe (catMaybes)
 import Data.Proxy (Proxy(..))
-import Data.Semigroup ((<>))
 
 import Control.Monad.Trans (MonadTrans, MonadIO, lift)
 import Control.Monad.Fix (MonadFix)
@@ -177,33 +177,42 @@ runPureStorageT s = mdo
   pure a
 -}
 
-runStorageT :: forall t k m a.
+runStorageT :: forall t js k m a.
                ( Reflex t
                , Monad m
-               , MonadJSM m
                , MonadFix m
                , MonadHold t m
                , TriggerEvent t m
                , PerformEvent t m
                , PostBuild t m
-               , MonadJSM (Performable m)
                , GKey k
                , GCompare k
                , ToJSONTag k Identity
                , FromJSONTag k Identity
+               , Prerender js t m
                )
             => StorageType
             -> StorageT t k m a
             -> m a
 runStorageT st s = mdo
-  window <- currentWindowUnchecked
-  eWindowChanges <- wrapDomEvent window (`on` storage) $ handleStorageEvents (Proxy :: Proxy k) st
+  stateDyn <- prerender (pure (never, DMap.empty)) $ do
+    window <- currentWindowUnchecked
+    eWindowChanges' <- wrapDomEvent window (`on` storage) $ handleStorageEvents (Proxy :: Proxy k) st
+    iStorage' <- readFromStorage (Proxy :: Proxy k) st
+    pure (eWindowChanges',iStorage')
 
-  iStorage <- readFromStorage (Proxy :: Proxy k) st
-  i <- holdIncremental iStorage $ eWindowChanges <> eAppChanges
+  let eWindowChanges = switchDyn $ fst <$> stateDyn
+  iStorage <- fmap snd . sample . current $ stateDyn
+  i <- holdIncremental iStorage $ fold
+    [ eWindowChanges
+    , eAppChanges
+    -- Once hydration switches over, patch the entire DMap with the value
+    -- from local storage.
+    , PatchDMap . DMap.map (ComposeMaybe . Just) . snd <$> updated stateDyn
+    ]
 
   (a, eAppChanges) <- runEventWriterT . flip runReaderT i . unStorageT $ s
-  performEvent_ $ writeToStorage st <$> eAppChanges
+  prerender_ (pure ()) $ performEvent_ $ writeToStorage st <$> eAppChanges
 
   pure a
 
