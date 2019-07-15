@@ -7,6 +7,8 @@ Portability : non-portable
 -}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeSynonymInstances #-}
+
 module Data.GADT.Aeson (
     GKey(..)
   , ToJSONTag(..)
@@ -54,15 +56,14 @@ decodeTagged :: FromJSONTag k f => k a -> Text -> Maybe (f a)
 decodeTagged k =
     decodeWith jsonEOF (parse (parseJSONTagged k)) . fromStrict . encodeUtf8
 
-newtype JSONDMap k f = JSONDMap { unJSONDMap :: DMap k f}
-  deriving (Eq, Ord, Show, Read)
+type JSONDMap k f = DMap k f
 
 instance (GKey k, ToJSONTag k f) => ToJSON (JSONDMap k f) where
   toJSON dm =
     let
       toPair (k :=> v) = (toKey (This k), toJSONTagged k v)
     in
-      object . fmap toPair . DMap.toList . unJSONDMap $ dm
+      object . fmap toPair . DMap.toList $ dm
 
 instance (GCompare k, GKey k, FromJSONTag k f) => FromJSON (JSONDMap k f) where
   parseJSON (Object v) =
@@ -72,6 +73,6 @@ instance (GCompare k, GKey k, FromJSONTag k f) => FromJSON (JSONDMap k f) where
         (\x -> Just (k :=> x)) <$> explicitParseField (parseJSONTagged k) v (toKey (This k)) <|>
         pure Nothing
     in
-      JSONDMap . DMap.fromList . catMaybes <$> traverse maybeKey ks
+      DMap.fromList . catMaybes <$> traverse maybeKey ks
   parseJSON x =
     typeMismatch "JSONDMap" x
