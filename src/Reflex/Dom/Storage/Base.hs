@@ -5,16 +5,16 @@ Maintainer  : dave.laing.80@gmail.com
 Stability   : experimental
 Portability : non-portable
 -}
-{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE CPP #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE RecursiveDo #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE PolyKinds #-}
-{-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE RecursiveDo #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
-{-# LANGUAGE CPP #-}
 module Reflex.Dom.Storage.Base (
     StorageT(..)
   , StorageType(..)
@@ -28,38 +28,41 @@ import Data.Maybe (catMaybes)
 import Data.Proxy (Proxy(..))
 import Data.Semigroup ((<>))
 
-import Control.Monad.Trans (MonadTrans, MonadIO, lift)
+import Control.Monad.Exception (MonadAsyncException, MonadException)
 import Control.Monad.Fix (MonadFix)
-import Control.Monad.Primitive (PrimMonad(..))
-import Control.Monad.Ref (MonadRef(..), MonadAtomicRef(..))
-import Control.Monad.Reader (ReaderT, MonadReader(..), runReaderT, ask)
-import Control.Monad.State (MonadState(..))
-import Control.Monad.Exception (MonadException, MonadAsyncException)
 import Control.Monad.Morph (hoist)
+import Control.Monad.Primitive (PrimMonad(..))
+import Control.Monad.Reader (MonadReader(..), ReaderT, ask, runReaderT)
+import Control.Monad.Ref (MonadAtomicRef(..), MonadRef(..))
+import Control.Monad.State (MonadState(..))
+import Control.Monad.Trans (MonadIO, MonadTrans, lift)
 
-import Reflex
-import Reflex.Host.Class
-import Reflex.Dom.Core hiding (Value, Error, Window)
 import Data.Functor.Misc (ComposeMaybe(..))
+import Reflex
+import Reflex.Dom.Core hiding (Error, Value, Window)
+import Reflex.Host.Class
 
 import Data.Text (Text)
 
-import Data.Dependent.Map (DMap, Some(..), GCompare)
+import Data.Dependent.Map (DMap)
 import qualified Data.Dependent.Map as DMap
+import Data.Dependent.Sum (DSum((:=>)))
+import Data.Some (Some(..), mkSome)
 
 import GHCJS.DOM (currentWindowUnchecked)
-import GHCJS.DOM.Types (MonadJSM)
 import GHCJS.DOM.EventM (EventM, on)
+import GHCJS.DOM.Storage (Storage(..), getItem, removeItem, setItem)
+import GHCJS.DOM.StorageEvent
+import GHCJS.DOM.Types (MonadJSM)
 import GHCJS.DOM.Window (Window, getLocalStorage, getSessionStorage)
 import GHCJS.DOM.WindowEventHandlers (storage)
-import GHCJS.DOM.Storage (Storage(..), getItem, setItem, removeItem)
-import GHCJS.DOM.StorageEvent
 
 import Reflex.Dom.Builder.Immediate (wrapDomEvent)
 
 import Reflex.Dom.Storage.Class
 
 import Data.GADT.Aeson
+import Data.GADT.Compare (GCompare)
 
 data StorageType =
     SessionStorage
@@ -222,7 +225,7 @@ sStore :: (MonadJSM m, GKey k, ToJSONTag k Identity)
        -> m ()
 sStore st k v = do
   s <- getStorage st
-  setItem s (toKey (This k)) (encodeTagged k v)
+  setItem s (toKey (mkSome k)) (encodeTagged k v)
 
 sLoad :: (MonadJSM m, GKey k, FromJSONTag k Identity)
       => StorageType
@@ -230,7 +233,7 @@ sLoad :: (MonadJSM m, GKey k, FromJSONTag k Identity)
       -> m (Maybe (Identity a))
 sLoad st k = do
   s <- getStorage st
-  mt <- getItem s (toKey (This k))
+  mt <- getItem s (toKey (mkSome k))
   pure $ decodeTagged k =<< mt
 
 sRemove :: (MonadJSM m, GKey k)
@@ -254,7 +257,7 @@ writeToStorage st pdm = do
   let
     change :: k a -> ComposeMaybe Identity a -> m (ComposeMaybe Identity a)
     change k v@(ComposeMaybe (Just a)) = v <$ sStore st k a
-    change k v@(ComposeMaybe Nothing)  = v <$ sRemove st (This k)
+    change k v@(ComposeMaybe Nothing)  = v <$ sRemove st (mkSome k)
   void . DMap.traverseWithKey change . unPatchDMap $ pdm
 
 readFromStorage :: ( Monad m
@@ -268,9 +271,9 @@ readFromStorage :: ( Monad m
                 -> m (DMap k Identity)
 readFromStorage p st = do
   let
-    readKey (This k) = do
+    readKey (Some k) = do
       mt <- sLoad st k
-      pure $ (k DMap.:=>) <$> mt
+      pure $ (k :=>) <$> mt
 
   xs <- traverse readKey (keys p)
   pure . DMap.fromList . catMaybes $ xs
@@ -291,12 +294,12 @@ handleStorageEvents _ _{- st -} = do
     s = fromKey =<< key
   case s of
     Nothing -> pure mempty
-    Just (This k) -> do
+    Just (Some k) -> do
       newValue :: Maybe Text <- getNewValue eS
       case newValue of
         Nothing ->
           pure . pdmRemove $ k
         Just nv ->
           case decodeTagged k nv of
-            Just v -> pure . pdmInsert k . runIdentity $ v
+            Just v  -> pure . pdmInsert k . runIdentity $ v
             Nothing -> pure mempty

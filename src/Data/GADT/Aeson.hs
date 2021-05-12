@@ -7,6 +7,8 @@ Portability : non-portable
 -}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE UndecidableInstances #-}
 module Data.GADT.Aeson (
     GKey(..)
   , ToJSONTag(..)
@@ -20,14 +22,17 @@ import Control.Applicative ((<|>))
 import Data.Maybe (catMaybes)
 import Data.Proxy (Proxy(..))
 
+import Data.ByteString.Lazy (fromStrict, toStrict)
+import Data.Some (Some(..), mkSome)
 import Data.Text (Text)
 import Data.Text.Encoding (decodeUtf8, encodeUtf8)
-import Data.ByteString.Lazy (toStrict,  fromStrict)
 
-import Data.Dependent.Sum (DSum(..))
-import Data.Dependent.Map (DMap, Some(..))
+import Data.Constraint.Extras (Has')
+import Data.Dependent.Map (DMap)
 import qualified Data.Dependent.Map as DMap
-import Data.GADT.Compare (GCompare)
+import Data.Dependent.Sum (DSum(..))
+import Data.GADT.Compare (GCompare, GEq)
+import Data.GADT.Show (GRead, GShow)
 
 import Data.Aeson
 import Data.Aeson.Encoding
@@ -55,12 +60,16 @@ decodeTagged k =
     decodeWith jsonEOF (parse (parseJSONTagged k)) . fromStrict . encodeUtf8
 
 newtype JSONDMap k f = JSONDMap { unJSONDMap :: DMap k f}
-  deriving (Eq, Ord, Show, Read)
+
+deriving instance (GEq k, Has' Eq k f) => Eq (JSONDMap k f)
+deriving instance (GCompare k, Has' Eq k f, Has' Ord k f) => Ord (JSONDMap k f)
+deriving instance (GShow k, Has' Show k f) => Show (JSONDMap k f)
+deriving instance (GCompare k, GRead k, Has' Read k f) => Read (JSONDMap k f)
 
 instance (GKey k, ToJSONTag k f) => ToJSON (JSONDMap k f) where
   toJSON dm =
     let
-      toPair (k :=> v) = (toKey (This k), toJSONTagged k v)
+      toPair (k :=> v) = (toKey (mkSome k), toJSONTagged k v)
     in
       object . fmap toPair . DMap.toList . unJSONDMap $ dm
 
@@ -68,8 +77,8 @@ instance (GCompare k, GKey k, FromJSONTag k f) => FromJSON (JSONDMap k f) where
   parseJSON (Object v) =
     let
       ks = keys (Proxy :: Proxy k)
-      maybeKey (This k) =
-        (\x -> Just (k :=> x)) <$> explicitParseField (parseJSONTagged k) v (toKey (This k)) <|>
+      maybeKey (Some k) =
+        (\x -> Just (k :=> x)) <$> explicitParseField (parseJSONTagged k) v (toKey (mkSome k)) <|>
         pure Nothing
     in
       JSONDMap . DMap.fromList . catMaybes <$> traverse maybeKey ks
